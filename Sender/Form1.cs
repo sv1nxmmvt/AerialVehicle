@@ -1,8 +1,5 @@
 using System;
 using System.Net;
-using System.Net.Sockets;
-using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -10,296 +7,346 @@ namespace Sender
 {
     public partial class Form1 : Form
     {
-        private UdpClient _sitlClient;
-        private UdpClient _forwardClient;
-        private IPEndPoint _sitlEndPoint;
-        private IPEndPoint _forwardEndPoint;
-        private bool _isConnected = false;
-        private CancellationTokenSource _cancellationTokenSource;
-        private int _packetsReceived = 0;
-        private int _packetsSent = 0;
+        private NetworkManager _networkManager;
+        private Logger _logger;
 
-        private const int SITL_PORT = 14550;
-        private const int FORWARD_PORT = 14562;
-        private const string SITL_ADDRESS = "127.0.0.1";
-        private const string FORWARD_ADDRESS = "127.0.0.1";
+        private Button _btnConnect;
+        private Button _btnDisconnect;
+        private Label _lblStatus;
+        private Label _lblPacketsReceived;
+        private Label _lblPacketsSent;
+        private ListBox _lstPackets;
+        private RichTextBox _rtbLog;
+        private Label _lblLog;
+        private Label _lblPacketsList;
 
         public Form1()
         {
             InitializeComponent();
-            InitializeNetworking();
             InitializeCustomComponents();
-        }
-
-        private void InitializeNetworking()
-        {
-            _sitlEndPoint = new IPEndPoint(IPAddress.Parse(SITL_ADDRESS), SITL_PORT);
-            _forwardEndPoint = new IPEndPoint(IPAddress.Parse(FORWARD_ADDRESS), FORWARD_PORT);
+            InitializeManagers();
         }
 
         private void InitializeCustomComponents()
         {
             this.Text = "MAVLink Sender - SITL to UDP Forwarder";
-            this.Size = new System.Drawing.Size(600, 520);
+            this.Size = new System.Drawing.Size(600, 600);
             this.FormBorderStyle = FormBorderStyle.FixedSingle;
             this.MaximizeBox = false;
+            this.StartPosition = FormStartPosition.CenterScreen;
 
             CreateControls();
         }
 
         private void CreateControls()
         {
-            var btnConnect = new Button
+            _btnConnect = new Button
             {
                 Name = "btnConnect",
                 Text = "Connect to SITL",
                 Location = new System.Drawing.Point(12, 12),
-                Size = new System.Drawing.Size(100, 30)
+                Size = new System.Drawing.Size(120, 30),
+                TabIndex = 0
             };
-            btnConnect.Click += btnConnect_Click;
-            this.Controls.Add(btnConnect);
+            _btnConnect.Click += BtnConnect_Click;
+            this.Controls.Add(_btnConnect);
 
-            var btnDisconnect = new Button
+            _btnDisconnect = new Button
             {
                 Name = "btnDisconnect",
                 Text = "Disconnect",
-                Location = new System.Drawing.Point(130, 12),
-                Size = new System.Drawing.Size(100, 30),
-                Enabled = false
+                Location = new System.Drawing.Point(145, 12),
+                Size = new System.Drawing.Size(120, 30),
+                Enabled = false,
+                TabIndex = 1
             };
-            btnDisconnect.Click += btnDisconnect_Click;
-            this.Controls.Add(btnDisconnect);
+            _btnDisconnect.Click += BtnDisconnect_Click;
+            this.Controls.Add(_btnDisconnect);
 
-            var lblStatus = new Label
+            _lblStatus = new Label
             {
                 Name = "lblStatus",
-                Text = "Status: Disconnected",
-                Location = new System.Drawing.Point(250, 20),
-                Size = new System.Drawing.Size(200, 13),
+                Text = $"Status: Disconnected | SITL: {Config.SITL_ADDRESS}:{Config.SITL_PORT}",
+                Location = new System.Drawing.Point(280, 20),
+                Size = new System.Drawing.Size(300, 13),
                 AutoSize = true
             };
-            this.Controls.Add(lblStatus);
+            this.Controls.Add(_lblStatus);
 
-            var lblPacketsReceived = new Label
+            _lblPacketsReceived = new Label
             {
                 Name = "lblPacketsReceived",
                 Text = "Packets Received: 0",
                 Location = new System.Drawing.Point(12, 60),
-                Size = new System.Drawing.Size(120, 13),
+                Size = new System.Drawing.Size(150, 13),
                 AutoSize = true
             };
-            this.Controls.Add(lblPacketsReceived);
+            this.Controls.Add(_lblPacketsReceived);
 
-            var lblPacketsSent = new Label
+            _lblPacketsSent = new Label
             {
                 Name = "lblPacketsSent",
-                Text = "Packets Sent: 0",
-                Location = new System.Drawing.Point(150, 60),
+                Text = "Packets Forwarded: 0",
+                Location = new System.Drawing.Point(180, 60),
+                Size = new System.Drawing.Size(150, 13),
+                AutoSize = true
+            };
+            this.Controls.Add(_lblPacketsSent);
+
+            _lblPacketsList = new Label
+            {
+                Name = "lblPacketsList",
+                Text = "Received Packets:",
+                Location = new System.Drawing.Point(12, 85),
                 Size = new System.Drawing.Size(100, 13),
                 AutoSize = true
             };
-            this.Controls.Add(lblPacketsSent);
+            this.Controls.Add(_lblPacketsList);
 
-            var lstPackets = new ListBox
+            _lstPackets = new ListBox
             {
                 Name = "lstPackets",
-                Location = new System.Drawing.Point(12, 90),
-                Size = new System.Drawing.Size(560, 200)
+                Location = new System.Drawing.Point(12, 105),
+                Size = new System.Drawing.Size(560, 180),
+                TabIndex = 2
             };
-            this.Controls.Add(lstPackets);
+            this.Controls.Add(_lstPackets);
 
-            var lblLog = new Label
+            _lblLog = new Label
             {
                 Name = "lblLog",
-                Text = "Log:",
-                Location = new System.Drawing.Point(12, 300),
-                Size = new System.Drawing.Size(25, 13),
+                Text = "Event Log:",
+                Location = new System.Drawing.Point(12, 295),
+                Size = new System.Drawing.Size(60, 13),
                 AutoSize = true
             };
-            this.Controls.Add(lblLog);
+            this.Controls.Add(_lblLog);
 
-            var rtbLog = new RichTextBox
+            _rtbLog = new RichTextBox
             {
                 Name = "rtbLog",
-                Location = new System.Drawing.Point(12, 320),
-                Size = new System.Drawing.Size(560, 150),
-                ReadOnly = true
+                Location = new System.Drawing.Point(12, 315),
+                Size = new System.Drawing.Size(560, 230),
+                ReadOnly = true,
+                TabIndex = 3,
+                Font = new System.Drawing.Font("Consolas", 9F)
             };
-            this.Controls.Add(rtbLog);
+            this.Controls.Add(_rtbLog);
         }
 
-        private async void btnConnect_Click(object sender, EventArgs e)
+        private void InitializeManagers()
         {
             try
             {
-                _cancellationTokenSource = new CancellationTokenSource();
+                _logger = new Logger(_rtbLog);
+                _networkManager = new NetworkManager(_logger);
 
-                _sitlClient = new UdpClient(SITL_PORT);
-                _forwardClient = new UdpClient();
+                _networkManager.PacketReceived += OnPacketReceived;
+                _networkManager.PacketForwarded += OnPacketForwarded;
+                _networkManager.ErrorOccurred += OnNetworkError;
+                _networkManager.ConnectionLost += OnConnectionLost;
 
-                _isConnected = true;
-
-                var btnConnect = this.Controls["btnConnect"] as Button;
-                var btnDisconnect = this.Controls["btnDisconnect"] as Button;
-                var lblStatus = this.Controls["lblStatus"] as Label;
-
-                btnConnect.Enabled = false;
-                btnDisconnect.Enabled = true;
-                lblStatus.Text = $"Status: Connected (SITL:{SITL_PORT} -> Forward:{FORWARD_PORT})";
-
-                LogMessage($"Connected to SITL on port {SITL_PORT}");
-                LogMessage($"Forwarding to {FORWARD_ADDRESS}:{FORWARD_PORT}");
-
-                await Task.Run(() => ListenForPackets(_cancellationTokenSource.Token));
+                _logger.LogInfo("Application initialized successfully");
+                _logger.LogInfo($"Configuration: SITL={Config.SITL_ADDRESS}:{Config.SITL_PORT}, Forward={Config.FORWARD_ADDRESS}:{Config.FORWARD_PORT}");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Connection failed: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                LogMessage($"Connection error: {ex.Message}");
-                ResetConnection();
+                MessageBox.Show($"Failed to initialize application: {ex.Message}", "Initialization Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        private void btnDisconnect_Click(object sender, EventArgs e)
-        {
-            DisconnectFromSITL();
-        }
-
-        private void DisconnectFromSITL()
+        private async void BtnConnect_Click(object sender, EventArgs e)
         {
             try
             {
-                _cancellationTokenSource?.Cancel();
-                _isConnected = false;
+                _btnConnect.Enabled = false;
+                _btnConnect.Text = "Connecting...";
 
-                _sitlClient?.Close();
-                _forwardClient?.Close();
+                bool connected = await _networkManager.ConnectAsync();
 
-                ResetConnection();
-                LogMessage("Disconnected from SITL");
+                if (connected)
+                {
+                    UpdateConnectionStatus(true);
+                }
+                else
+                {
+                    _btnConnect.Enabled = true;
+                    _btnConnect.Text = "Connect to SITL";
+                    MessageBox.Show(
+                        $"Failed to connect to SITL at {Config.SITL_ADDRESS}:{Config.SITL_PORT}\n\n" +
+                        "Please ensure:\n" +
+                        "1. SITL ArduPilot is running\n" +
+                        "2. Port 14550 is not in use by another application\n" +
+                        "3. No firewall is blocking the connection",
+                        "Connection Failed",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning
+                    );
+                }
             }
             catch (Exception ex)
             {
-                LogMessage($"Disconnect error: {ex.Message}");
+                _logger.LogError($"Connection error: {ex.Message}");
+                MessageBox.Show($"Connection failed: {ex.Message}", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                _btnConnect.Enabled = true;
+                _btnConnect.Text = "Connect to SITL";
             }
         }
 
-        private void ResetConnection()
+        private async void BtnDisconnect_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                _btnDisconnect.Enabled = false;
+                await _networkManager.DisconnectAsync();
+                UpdateConnectionStatus(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Disconnect error: {ex.Message}");
+            }
+        }
+
+        private void OnPacketReceived(byte[] data, IPEndPoint remoteEndPoint)
         {
             if (InvokeRequired)
             {
-                Invoke(new Action(ResetConnection));
+                Invoke(new Action<byte[], IPEndPoint>(OnPacketReceived), data, remoteEndPoint);
                 return;
             }
 
-            var btnConnect = this.Controls["btnConnect"] as Button;
-            var btnDisconnect = this.Controls["btnDisconnect"] as Button;
-            var lblStatus = this.Controls["lblStatus"] as Label;
-
-            btnConnect.Enabled = true;
-            btnDisconnect.Enabled = false;
-            lblStatus.Text = "Status: Disconnected";
-        }
-
-        private async Task ListenForPackets(CancellationToken cancellationToken)
-        {
-            while (_isConnected && !cancellationToken.IsCancellationRequested)
-            {
-                try
-                {
-                    var result = await _sitlClient.ReceiveAsync();
-                    byte[] receivedData = result.Buffer;
-
-                    if (receivedData.Length > 0)
-                    {
-                        _packetsReceived++;
-
-                        string packetInfo = $"[{DateTime.Now:HH:mm:ss.fff}] Received MAVLink packet: {receivedData.Length} bytes from {result.RemoteEndPoint}";
-
-                        Invoke(new Action(() =>
-                        {
-                            var lstPackets = this.Controls["lstPackets"] as ListBox;
-                            var lblPacketsReceived = this.Controls["lblPacketsReceived"] as Label;
-
-                            lstPackets.Items.Add(packetInfo);
-                            if (lstPackets.Items.Count > 100)
-                            {
-                                lstPackets.Items.RemoveAt(0);
-                            }
-                            lstPackets.TopIndex = lstPackets.Items.Count - 1;
-                            lblPacketsReceived.Text = $"Packets Received: {_packetsReceived}";
-                        }));
-
-                        await ForwardPacket(receivedData);
-
-                        string hexData = BitConverter.ToString(receivedData).Replace("-", " ");
-                        if (hexData.Length > 50) hexData = hexData.Substring(0, 50) + "...";
-
-                        LogMessage($"Packet data (hex): {hexData}");
-                    }
-                }
-                catch (ObjectDisposedException)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    if (!cancellationToken.IsCancellationRequested)
-                    {
-                        LogMessage($"Listen error: {ex.Message}");
-                        await Task.Delay(1000, cancellationToken);
-                    }
-                }
-            }
-        }
-
-        private async Task ForwardPacket(byte[] packetData)
-        {
             try
             {
-                await _forwardClient.SendAsync(packetData, packetData.Length, _forwardEndPoint);
-                _packetsSent++;
+                string packetInfo = $"[{DateTime.Now:HH:mm:ss.fff}] Received: {data.Length} bytes from {remoteEndPoint}";
 
-                Invoke(new Action(() =>
+                _lstPackets.Items.Add(packetInfo);
+                if (_lstPackets.Items.Count > Config.MAX_LISTBOX_ITEMS)
                 {
-                    var lblPacketsSent = this.Controls["lblPacketsSent"] as Label;
-                    lblPacketsSent.Text = $"Packets Sent: {_packetsSent}";
-                }));
+                    _lstPackets.Items.RemoveAt(0);
+                }
+                _lstPackets.TopIndex = _lstPackets.Items.Count - 1;
+
+                _lblPacketsReceived.Text = $"Packets Received: {_networkManager.PacketsReceived}";
+
+                if (Config.SHOW_HEX_DATA && Config.ENABLE_DETAILED_LOGGING)
+                {
+                    string hexData = BitConverter.ToString(data, 0, Math.Min(Config.HEX_PREVIEW_LENGTH, data.Length)).Replace("-", " ");
+                    if (data.Length > Config.HEX_PREVIEW_LENGTH) hexData += "...";
+                    _logger.LogDebug($"Packet data: {hexData}");
+                }
             }
             catch (Exception ex)
             {
-                LogMessage($"Forward error: {ex.Message}");
+                _logger.LogError($"Error displaying packet: {ex.Message}");
             }
         }
 
-        private void LogMessage(string message)
+        private void OnPacketForwarded(byte[] data)
         {
             if (InvokeRequired)
             {
-                Invoke(new Action<string>(LogMessage), message);
+                Invoke(new Action<byte[]>(OnPacketForwarded), data);
                 return;
             }
 
-            var rtbLog = this.Controls["rtbLog"] as RichTextBox;
-            string logEntry = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
-            rtbLog.AppendText(logEntry + Environment.NewLine);
-            rtbLog.ScrollToCaret();
-
-            if (rtbLog.Lines.Length > 200)
+            try
             {
-                var lines = rtbLog.Lines;
-                var newLines = new string[100];
-                Array.Copy(lines, lines.Length - 100, newLines, 0, 100);
-                rtbLog.Lines = newLines;
+                _lblPacketsSent.Text = $"Packets Forwarded: {_networkManager.PacketsForwarded}";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error updating forward counter: {ex.Message}");
+            }
+        }
+
+        private void OnNetworkError(Exception ex)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action<Exception>(OnNetworkError), ex);
+                return;
+            }
+
+            _logger.LogError($"Network error: {ex.Message}");
+        }
+
+        private async void OnConnectionLost()
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action(OnConnectionLost));
+                return;
+            }
+
+            _logger.LogWarning("Connection to SITL lost");
+
+            var result = MessageBox.Show(
+                "Connection to SITL was lost.\n\nWould you like to reconnect?",
+                "Connection Lost",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning
+            );
+
+            if (result == DialogResult.Yes)
+            {
+                await _networkManager.DisconnectAsync();
+                await Task.Delay(500);
+                BtnConnect_Click(null, null);
+            }
+            else
+            {
+                await _networkManager.DisconnectAsync();
+                UpdateConnectionStatus(false);
+            }
+        }
+
+        private void UpdateConnectionStatus(bool connected)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action<bool>(UpdateConnectionStatus), connected);
+                return;
+            }
+
+            _btnConnect.Enabled = !connected;
+            _btnConnect.Text = "Connect to SITL";
+            _btnDisconnect.Enabled = connected;
+
+            if (connected)
+            {
+                _lblStatus.Text = $"Status: Connected | Forwarding to {Config.FORWARD_ADDRESS}:{Config.FORWARD_PORT}";
+                _lblStatus.ForeColor = System.Drawing.Color.Green;
+            }
+            else
+            {
+                _lblStatus.Text = $"Status: Disconnected | SITL: {Config.SITL_ADDRESS}:{Config.SITL_PORT}";
+                _lblStatus.ForeColor = System.Drawing.Color.Red;
             }
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (_isConnected)
+            if (_networkManager?.IsConnected == true)
             {
-                DisconnectFromSITL();
+                var result = MessageBox.Show(
+                    "Connection is still active. Are you sure you want to exit?",
+                    "Confirm Exit",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question
+                );
+
+                if (result == DialogResult.No)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                _networkManager?.DisconnectAsync().Wait();
             }
+
+            _networkManager?.Dispose();
             base.OnFormClosing(e);
         }
     }

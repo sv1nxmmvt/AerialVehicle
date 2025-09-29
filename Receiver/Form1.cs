@@ -1,8 +1,6 @@
 using System;
 using System.Data;
 using System.Net;
-using System.Net.Sockets;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -10,19 +8,23 @@ namespace Receiver
 {
     public partial class Form1 : Form
     {
-        private UdpClient _udpClient;
-        private bool _isListening = false;
-        private CancellationTokenSource _cancellationTokenSource;
+        private NetworkListener _networkListener;
+        private MavlinkDecoder _mavlinkDecoder;
         private DataTable _packetsDataTable;
-        private int _totalPacketsReceived = 0;
 
-        private const int LISTEN_PORT = 14562;
+        private Button _btnStart;
+        private Button _btnStop;
+        private Button _btnClear;
+        private Label _lblStatus;
+        private Label _lblPacketsCount;
+        private DataGridView _dgvPackets;
 
         public Form1()
         {
             InitializeComponent();
             InitializeDataTable();
             InitializeCustomComponents();
+            InitializeManagers();
         }
 
         private void InitializeDataTable()
@@ -30,65 +32,71 @@ namespace Receiver
             _packetsDataTable = new DataTable();
             _packetsDataTable.Columns.Add("№", typeof(int));
             _packetsDataTable.Columns.Add("Время получения", typeof(string));
+            _packetsDataTable.Columns.Add("Версия", typeof(string));
             _packetsDataTable.Columns.Add("Имя пакета", typeof(string));
             _packetsDataTable.Columns.Add("Размер", typeof(string));
-            _packetsDataTable.Columns.Add("Содержимое пакета", typeof(string));
+            _packetsDataTable.Columns.Add("Sys ID", typeof(string));
+            _packetsDataTable.Columns.Add("Содержимое", typeof(string));
         }
 
         private void InitializeCustomComponents()
         {
             this.Text = "MAVLink Receiver - UDP Packet Decoder";
-            this.Size = new System.Drawing.Size(900, 600);
+            this.Size = new System.Drawing.Size(1100, 650);
             this.FormBorderStyle = FormBorderStyle.Sizable;
-            this.MinimumSize = new System.Drawing.Size(800, 500);
+            this.MinimumSize = new System.Drawing.Size(900, 500);
+            this.StartPosition = FormStartPosition.CenterScreen;
 
             CreateControls();
         }
 
         private void CreateControls()
         {
-            var btnStart = new Button
+            _btnStart = new Button
             {
                 Name = "btnStart",
                 Text = "Start Listening",
                 Location = new System.Drawing.Point(12, 12),
-                Size = new System.Drawing.Size(120, 30)
+                Size = new System.Drawing.Size(120, 30),
+                TabIndex = 0
             };
-            btnStart.Click += btnStart_Click;
-            this.Controls.Add(btnStart);
+            _btnStart.Click += BtnStart_Click;
+            this.Controls.Add(_btnStart);
 
-            var btnStop = new Button
+            _btnStop = new Button
             {
                 Name = "btnStop",
                 Text = "Stop Listening",
-                Location = new System.Drawing.Point(150, 12),
+                Location = new System.Drawing.Point(145, 12),
                 Size = new System.Drawing.Size(120, 30),
-                Enabled = false
+                Enabled = false,
+                TabIndex = 1
             };
-            btnStop.Click += btnStop_Click;
-            this.Controls.Add(btnStop);
+            _btnStop.Click += BtnStop_Click;
+            this.Controls.Add(_btnStop);
 
-            var btnClear = new Button
+            _btnClear = new Button
             {
                 Name = "btnClear",
                 Text = "Clear Table",
-                Location = new System.Drawing.Point(290, 12),
-                Size = new System.Drawing.Size(100, 30)
+                Location = new System.Drawing.Point(280, 12),
+                Size = new System.Drawing.Size(100, 30),
+                TabIndex = 2
             };
-            btnClear.Click += btnClear_Click;
-            this.Controls.Add(btnClear);
+            _btnClear.Click += BtnClear_Click;
+            this.Controls.Add(_btnClear);
 
-            var lblStatus = new Label
+            _lblStatus = new Label
             {
                 Name = "lblStatus",
-                Text = $"Status: Not listening (Port: {LISTEN_PORT})",
-                Location = new System.Drawing.Point(420, 20),
+                Text = $"Status: Not listening | Port: {Config.LISTEN_PORT}",
+                Location = new System.Drawing.Point(400, 20),
                 Size = new System.Drawing.Size(300, 13),
                 AutoSize = true
             };
-            this.Controls.Add(lblStatus);
+            this.Controls.Add(_lblStatus);
 
-            var lblPacketsCount = new Label
+            _lblPacketsCount = new Label
             {
                 Name = "lblPacketsCount",
                 Text = "Packets Received: 0",
@@ -96,283 +104,272 @@ namespace Receiver
                 Size = new System.Drawing.Size(150, 13),
                 AutoSize = true
             };
-            this.Controls.Add(lblPacketsCount);
+            this.Controls.Add(_lblPacketsCount);
 
-            var dgvPackets = new DataGridView
+            _dgvPackets = new DataGridView
             {
                 Name = "dgvPackets",
                 Location = new System.Drawing.Point(12, 80),
-                Size = new System.Drawing.Size(860, 480),
+                Size = new System.Drawing.Size(1060, 520),
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
                 DataSource = _packetsDataTable,
                 ReadOnly = true,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
+                Font = new System.Drawing.Font("Consolas", 9F),
+                TabIndex = 3
             };
 
-            dgvPackets.DataBindingComplete += (s, e) =>
+            _dgvPackets.DataBindingComplete += (s, e) =>
             {
-                if (dgvPackets.Columns.Count >= 5)
+                if (_dgvPackets.Columns.Count >= 7)
                 {
-                    dgvPackets.Columns[0].Width = 50;
-                    dgvPackets.Columns[1].Width = 120;
-                    dgvPackets.Columns[2].Width = 150;
-                    dgvPackets.Columns[3].Width = 80;
-                    dgvPackets.Columns[4].Width = 400;
+                    _dgvPackets.Columns[0].Width = 50;
+                    _dgvPackets.Columns[1].Width = 110;
+                    _dgvPackets.Columns[2].Width = 110;
+                    _dgvPackets.Columns[3].Width = 180;
+                    _dgvPackets.Columns[4].Width = 70;
+                    _dgvPackets.Columns[5].Width = 60;
+                    _dgvPackets.Columns[6].Width = 450;
+                    _dgvPackets.Columns[6].DefaultCellStyle.WrapMode = DataGridViewTriState.False;
                 }
             };
 
-            this.Controls.Add(dgvPackets);
-
-            this.Resize += (s, e) =>
-            {
-                dgvPackets.Size = new System.Drawing.Size(
-                    this.ClientSize.Width - 24,
-                    this.ClientSize.Height - 100
-                );
-            };
+            this.Controls.Add(_dgvPackets);
         }
 
-        private async void btnStart_Click(object sender, EventArgs e)
+        private void InitializeManagers()
         {
             try
             {
-                _cancellationTokenSource = new CancellationTokenSource();
-                _udpClient = new UdpClient(LISTEN_PORT);
-                _isListening = true;
+                _networkListener = new NetworkListener();
+                _mavlinkDecoder = new MavlinkDecoder();
 
-                var btnStart = this.Controls["btnStart"] as Button;
-                var btnStop = this.Controls["btnStop"] as Button;
-                var lblStatus = this.Controls["lblStatus"] as Label;
+                _networkListener.PacketReceived += OnPacketReceived;
+                _networkListener.ErrorOccurred += OnNetworkError;
 
-                if (btnStart != null) btnStart.Enabled = false;
-                if (btnStop != null) btnStop.Enabled = true;
-                if (lblStatus != null) lblStatus.Text = $"Status: Listening on port {LISTEN_PORT}";
-
-                LogMessage($"Started listening on UDP port {LISTEN_PORT}");
-
-                await Task.Run(() => ListenForPackets(_cancellationTokenSource.Token));
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Application initialized successfully");
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Configuration: Listen Port={Config.LISTEN_PORT}");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to start listening: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                LogMessage($"Start error: {ex.Message}");
-                ResetListening();
+                MessageBox.Show($"Failed to initialize application: {ex.Message}", "Initialization Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        private void btnStop_Click(object sender, EventArgs e)
-        {
-            StopListening();
-        }
-
-        private void btnClear_Click(object sender, EventArgs e)
-        {
-            _packetsDataTable.Clear();
-            _totalPacketsReceived = 0;
-            UpdatePacketsCount();
-            LogMessage("Packets table cleared");
-        }
-
-        private void StopListening()
+        private async void BtnStart_Click(object sender, EventArgs e)
         {
             try
             {
-                _cancellationTokenSource?.Cancel();
-                _isListening = false;
-                _udpClient?.Close();
+                _btnStart.Enabled = false;
+                _btnStart.Text = "Starting...";
 
-                ResetListening();
-                LogMessage("Stopped listening");
-            }
-            catch (Exception ex)
-            {
-                LogMessage($"Stop error: {ex.Message}");
-            }
-        }
+                bool started = await _networkListener.StartListeningAsync();
 
-        private void ResetListening()
-        {
-            if (InvokeRequired)
-            {
-                Invoke(new Action(ResetListening));
-                return;
-            }
-
-            var btnStart = this.Controls["btnStart"] as Button;
-            var btnStop = this.Controls["btnStop"] as Button;
-            var lblStatus = this.Controls["lblStatus"] as Label;
-
-            if (btnStart != null) btnStart.Enabled = true;
-            if (btnStop != null) btnStop.Enabled = false;
-            if (lblStatus != null) lblStatus.Text = $"Status: Not listening (Port: {LISTEN_PORT})";
-        }
-
-        private async Task ListenForPackets(CancellationToken cancellationToken)
-        {
-            while (_isListening && !cancellationToken.IsCancellationRequested)
-            {
-                try
+                if (started)
                 {
-                    var result = await _udpClient.ReceiveAsync();
-                    byte[] receivedData = result.Buffer;
-
-                    if (receivedData.Length > 0)
-                    {
-                        _totalPacketsReceived++;
-
-                        ProcessMavlinkPacket(receivedData, result.RemoteEndPoint);
-                    }
-                }
-                catch (ObjectDisposedException)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    if (!cancellationToken.IsCancellationRequested)
-                    {
-                        LogMessage($"Listen error: {ex.Message}");
-                        await Task.Delay(1000, cancellationToken);
-                    }
-                }
-            }
-        }
-
-        private void ProcessMavlinkPacket(byte[] packetData, EndPoint remoteEndPoint)
-        {
-            try
-            {
-                string timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
-                string packetName = "Unknown MAVLink";
-                string packetSize = $"{packetData.Length} bytes";
-                string packetContent = "";
-
-                if (packetData.Length >= 8)
-                {
-                    if (packetData[0] == 0xFE)
-                    {
-                        packetName = "MAVLink v1.0";
-                        if (packetData.Length >= 6)
-                        {
-                            byte msgId = packetData[5];
-                            packetName = $"MAVLink v1.0 (ID: {msgId})";
-                            packetContent = GetMavlinkMessageName(msgId);
-                        }
-                    }
-                    else if (packetData[0] == 0xFD)
-                    {
-                        packetName = "MAVLink v2.0";
-                        if (packetData.Length >= 10)
-                        {
-                            uint msgId = (uint)(packetData[7] | (packetData[8] << 8) | (packetData[9] << 16));
-                            packetName = $"MAVLink v2.0 (ID: {msgId})";
-                            packetContent = GetMavlinkMessageName((byte)(msgId & 0xFF));
-                        }
-                    }
-                    else
-                    {
-                        packetName = "Non-MAVLink Data";
-                    }
-                }
-
-                string hexPreview = BitConverter.ToString(packetData, 0, Math.Min(16, packetData.Length)).Replace("-", " ");
-                if (packetData.Length > 16) hexPreview += "...";
-
-                if (!string.IsNullOrEmpty(packetContent))
-                {
-                    packetContent += $" | Hex: {hexPreview}";
+                    UpdateListeningStatus(true);
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Successfully started listening on port {Config.LISTEN_PORT}");
                 }
                 else
                 {
-                    packetContent = $"Hex: {hexPreview}";
-                }
-
-                Invoke(new Action(() =>
-                {
-                    _packetsDataTable.Rows.Add(
-                        _totalPacketsReceived,
-                        timestamp,
-                        packetName,
-                        packetSize,
-                        packetContent
+                    _btnStart.Enabled = true;
+                    _btnStart.Text = "Start Listening";
+                    MessageBox.Show(
+                        $"Failed to start listening on port {Config.LISTEN_PORT}\n\n" +
+                        "Please ensure:\n" +
+                        "1. The port is not in use by another application\n" +
+                        "2. Sender application is running and forwarding packets\n" +
+                        "3. No firewall is blocking the connection",
+                        "Start Failed",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning
                     );
-
-                    var dgvPackets = this.Controls["dgvPackets"] as DataGridView;
-                    if (dgvPackets != null && dgvPackets.Rows.Count > 0)
-                    {
-                        dgvPackets.FirstDisplayedScrollingRowIndex = dgvPackets.Rows.Count - 1;
-                    }
-
-                    UpdatePacketsCount();
-
-                    if (_packetsDataTable.Rows.Count > 1000)
-                    {
-                        _packetsDataTable.Rows.RemoveAt(0);
-                    }
-                }));
-
-                LogMessage($"Processed packet #{_totalPacketsReceived}: {packetName}");
+                }
             }
             catch (Exception ex)
             {
-                LogMessage($"Packet processing error: {ex.Message}");
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Start error: {ex.Message}");
+                MessageBox.Show($"Failed to start listening: {ex.Message}", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                _btnStart.Enabled = true;
+                _btnStart.Text = "Start Listening";
             }
         }
 
-        private string GetMavlinkMessageName(byte messageId)
+        private async void BtnStop_Click(object sender, EventArgs e)
         {
-            return messageId switch
+            try
             {
-                0 => "HEARTBEAT",
-                1 => "SYS_STATUS",
-                2 => "SYSTEM_TIME",
-                4 => "PING",
-                11 => "SET_MODE",
-                20 => "PARAM_REQUEST_READ",
-                21 => "PARAM_REQUEST_LIST",
-                22 => "PARAM_VALUE",
-                24 => "GPS_RAW_INT",
-                27 => "RAW_IMU",
-                30 => "ATTITUDE",
-                32 => "LOCAL_POSITION_NED",
-                33 => "GLOBAL_POSITION_INT",
-                74 => "VFR_HUD",
-                76 => "COMMAND_LONG",
-                77 => "COMMAND_ACK",
-                87 => "POSITION_TARGET_GLOBAL_INT",
-                109 => "RADIO_STATUS",
-                116 => "SCALED_IMU2",
-                147 => "BATTERY_STATUS",
-                230 => "ESTIMATOR_STATUS",
-                241 => "VIBRATION",
-                253 => "STATUSTEXT",
-                _ => $"MSG_ID_{messageId}"
-            };
-        }
-
-        private void UpdatePacketsCount()
-        {
-            var lblPacketsCount = this.Controls["lblPacketsCount"] as Label;
-            if (lblPacketsCount != null)
+                _btnStop.Enabled = false;
+                await _networkListener.StopListeningAsync();
+                UpdateListeningStatus(false);
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Stopped listening");
+            }
+            catch (Exception ex)
             {
-                lblPacketsCount.Text = $"Packets Received: {_totalPacketsReceived}";
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Stop error: {ex.Message}");
+                MessageBox.Show($"Error stopping listener: {ex.Message}", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                _btnStop.Enabled = true;
             }
         }
 
-        private void LogMessage(string message)
+        private void BtnClear_Click(object sender, EventArgs e)
         {
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
+            try
+            {
+                var result = MessageBox.Show(
+                    $"Are you sure you want to clear all {_packetsDataTable.Rows.Count} packets from the table?",
+                    "Confirm Clear",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question
+                );
+
+                if (result == DialogResult.Yes)
+                {
+                    _packetsDataTable.Clear();
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Packets table cleared");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Clear error: {ex.Message}");
+                MessageBox.Show($"Error clearing table: {ex.Message}", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void OnPacketReceived(byte[] data, IPEndPoint remoteEndPoint)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action<byte[], IPEndPoint>(OnPacketReceived), data, remoteEndPoint);
+                return;
+            }
+
+            try
+            {
+                string timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
+
+                var packetInfo = _mavlinkDecoder.DecodePacket(data);
+
+                string version = packetInfo.IsValid ? packetInfo.Version : "Invalid";
+                string packetName = packetInfo.IsValid ? packetInfo.MessageName : "DECODE_ERROR";
+                string packetSize = $"{data.Length}B";
+                string sysId = packetInfo.IsValid ? $"{packetInfo.SystemId}:{packetInfo.ComponentId}" : "N/A";
+
+                string content = "";
+                if (packetInfo.IsValid)
+                {
+                    content = $"MsgID: {packetInfo.MessageIdExtended} | Payload: {packetInfo.PayloadLength}B";
+
+                    if (Config.SHOW_HEX_DATA)
+                    {
+                        string hexPreview = BitConverter.ToString(data, 0, Math.Min(Config.HEX_PREVIEW_LENGTH, data.Length)).Replace("-", " ");
+                        if (data.Length > Config.HEX_PREVIEW_LENGTH) hexPreview += "...";
+                        content += $" | Hex: {hexPreview}";
+                    }
+                }
+                else
+                {
+                    content = $"Error: {packetInfo.ErrorMessage}";
+                }
+
+                _packetsDataTable.Rows.Add(
+                    _networkListener.PacketsReceived,
+                    timestamp,
+                    version,
+                    packetName,
+                    packetSize,
+                    sysId,
+                    content
+                );
+
+                if (Config.AUTO_SCROLL_ENABLED && _dgvPackets.Rows.Count > 0)
+                {
+                    _dgvPackets.FirstDisplayedScrollingRowIndex = _dgvPackets.Rows.Count - 1;
+                }
+
+                _lblPacketsCount.Text = $"Packets Received: {_networkListener.PacketsReceived}";
+
+                if (_packetsDataTable.Rows.Count > Config.MAX_TABLE_ROWS)
+                {
+                    int rowsToRemove = _packetsDataTable.Rows.Count - Config.AUTO_CLEAR_THRESHOLD;
+                    for (int i = 0; i < rowsToRemove; i++)
+                    {
+                        _packetsDataTable.Rows.RemoveAt(0);
+                    }
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Auto-cleared {rowsToRemove} old rows");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Error processing packet: {ex.Message}");
+            }
+        }
+
+        private void OnNetworkError(Exception ex)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action<Exception>(OnNetworkError), ex);
+                return;
+            }
+
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Network error: {ex.Message}");
+            MessageBox.Show($"Network error: {ex.Message}", "Network Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+
+        private void UpdateListeningStatus(bool listening)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action<bool>(UpdateListeningStatus), listening);
+                return;
+            }
+
+            _btnStart.Enabled = !listening;
+            _btnStart.Text = "Start Listening";
+            _btnStop.Enabled = listening;
+
+            if (listening)
+            {
+                _lblStatus.Text = $"Status: Listening on port {Config.LISTEN_PORT} ?";
+                _lblStatus.ForeColor = System.Drawing.Color.Green;
+            }
+            else
+            {
+                _lblStatus.Text = $"Status: Not listening | Port: {Config.LISTEN_PORT}";
+                _lblStatus.ForeColor = System.Drawing.Color.Red;
+            }
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (_isListening)
+            if (_networkListener?.IsListening == true)
             {
-                StopListening();
+                var result = MessageBox.Show(
+                    "Listener is still active. Are you sure you want to exit?",
+                    "Confirm Exit",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question
+                );
+
+                if (result == DialogResult.No)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                _networkListener?.StopListeningAsync().Wait();
             }
+
+            _networkListener?.Dispose();
             base.OnFormClosing(e);
         }
     }
