@@ -41,8 +41,8 @@ namespace Receiver
 
         private void InitializeCustomComponents()
         {
-            this.Text = "MAVLink Receiver - UDP Packet Decoder";
-            this.Size = new System.Drawing.Size(1100, 650);
+            this.Text = "MAVLink Receiver - UDP Packet Decoder (Asv.Mavlink 4.0.17)";
+            this.Size = new System.Drawing.Size(1200, 700);
             this.FormBorderStyle = FormBorderStyle.Sizable;
             this.MinimumSize = new System.Drawing.Size(900, 500);
             this.StartPosition = FormStartPosition.CenterScreen;
@@ -91,7 +91,7 @@ namespace Receiver
                 Name = "lblStatus",
                 Text = $"Status: Not listening | Port: {Config.LISTEN_PORT}",
                 Location = new System.Drawing.Point(400, 20),
-                Size = new System.Drawing.Size(300, 13),
+                Size = new System.Drawing.Size(400, 13),
                 AutoSize = true
             };
             this.Controls.Add(_lblStatus);
@@ -99,9 +99,9 @@ namespace Receiver
             _lblPacketsCount = new Label
             {
                 Name = "lblPacketsCount",
-                Text = "Packets Received: 0",
+                Text = "Packets Received: 0 | Decoded with Asv.Mavlink 4.0.17",
                 Location = new System.Drawing.Point(12, 55),
-                Size = new System.Drawing.Size(150, 13),
+                Size = new System.Drawing.Size(300, 13),
                 AutoSize = true
             };
             this.Controls.Add(_lblPacketsCount);
@@ -110,7 +110,7 @@ namespace Receiver
             {
                 Name = "dgvPackets",
                 Location = new System.Drawing.Point(12, 80),
-                Size = new System.Drawing.Size(1060, 520),
+                Size = new System.Drawing.Size(1160, 580),
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
                 DataSource = _packetsDataTable,
                 ReadOnly = true,
@@ -128,11 +128,11 @@ namespace Receiver
                 {
                     _dgvPackets.Columns[0].Width = 50;
                     _dgvPackets.Columns[1].Width = 110;
-                    _dgvPackets.Columns[2].Width = 110;
-                    _dgvPackets.Columns[3].Width = 180;
+                    _dgvPackets.Columns[2].Width = 120;
+                    _dgvPackets.Columns[3].Width = 200;
                     _dgvPackets.Columns[4].Width = 70;
-                    _dgvPackets.Columns[5].Width = 60;
-                    _dgvPackets.Columns[6].Width = 450;
+                    _dgvPackets.Columns[5].Width = 70;
+                    _dgvPackets.Columns[6].Width = 500;
                     _dgvPackets.Columns[6].DefaultCellStyle.WrapMode = DataGridViewTriState.False;
                 }
             };
@@ -151,6 +151,7 @@ namespace Receiver
                 _networkListener.ErrorOccurred += OnNetworkError;
 
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Application initialized successfully");
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Using Asv.Mavlink 4.0.17 for packet decoding");
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Configuration: Listen Port={Config.LISTEN_PORT}");
             }
             catch (Exception ex)
@@ -265,14 +266,7 @@ namespace Receiver
                 string content = "";
                 if (packetInfo.IsValid)
                 {
-                    content = $"MsgID: {packetInfo.MessageIdExtended} | Payload: {packetInfo.PayloadLength}B";
-
-                    if (Config.SHOW_HEX_DATA)
-                    {
-                        string hexPreview = BitConverter.ToString(data, 0, Math.Min(Config.HEX_PREVIEW_LENGTH, data.Length)).Replace("-", " ");
-                        if (data.Length > Config.HEX_PREVIEW_LENGTH) hexPreview += "...";
-                        content += $" | Hex: {hexPreview}";
-                    }
+                    content = packetInfo.DecodedContent;
                 }
                 else
                 {
@@ -294,7 +288,7 @@ namespace Receiver
                     _dgvPackets.FirstDisplayedScrollingRowIndex = _dgvPackets.Rows.Count - 1;
                 }
 
-                _lblPacketsCount.Text = $"Packets Received: {_networkListener.PacketsReceived}";
+                _lblPacketsCount.Text = $"Packets Received: {_networkListener.PacketsReceived} | Decoded: Asv.Mavlink 4.0.17";
 
                 if (_packetsDataTable.Rows.Count > Config.MAX_TABLE_ROWS)
                 {
@@ -309,6 +303,7 @@ namespace Receiver
             catch (Exception ex)
             {
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Error processing packet: {ex.Message}");
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] Stack trace: {ex.StackTrace}");
             }
         }
 
@@ -339,7 +334,7 @@ namespace Receiver
 
             if (listening)
             {
-                _lblStatus.Text = $"Status: Listening on port {Config.LISTEN_PORT} ?";
+                _lblStatus.Text = $"Status: Listening on port {Config.LISTEN_PORT} ? (Asv.Mavlink decoder active)";
                 _lblStatus.ForeColor = System.Drawing.Color.Green;
             }
             else

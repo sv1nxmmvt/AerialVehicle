@@ -8,4 +8,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Asv.Mavlink" Version="4.0.17" />
+  </ItemGroup>
+
 </Project>
